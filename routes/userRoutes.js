@@ -8,6 +8,8 @@ const multerMiddleware = require('../middleware/multer');
 
 // Routes
 router.post('/register', validationMiddleware.validateRegistration, userController.registerUser);
+router.get('/verify-email', userController.verifyEmail);
+
 router.post('/login', passport.authenticate('local', { session: false }), userController.loginUser);
 
 router.get('/get', authMiddleware.validateAccessToken, userController.getUserData);

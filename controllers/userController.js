@@ -16,7 +16,6 @@ const transporter = nodemailer.createTransport({
         pass: process.env.EMAIL_PASSWORD
     }
 });
-
 exports.registerUser = async (req, res) => {
     try {
         const { username, password, confirmPassword, email, firstname, lastname } = req.body;
@@ -26,18 +25,38 @@ exports.registerUser = async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(password, 8);
 
+        const verificationToken = jwt.sign({ email }, process.env.VERIFICATION_SECRET, { expiresIn: '1d' });
+
         const newUser = new User({
             username,
             password: hashedPassword,
             email,
             firstname,
-            lastname
+            lastname,
+            verificationToken
         });
-        await newUser.save();
-        await sendRegistrationEmail(email);
-        res.status(200).json({ message: 'User registered successfully' });
+        await newUser.save(); 
+        await sendRegistrationEmail(email, verificationToken);
+        res.status(200).json({ message: 'Registration email sent. Please verify your email address.' });
     } catch (error) {
-        res.status(400).json({ error: "Error occurred! Try Again" });
+        console.error('Error registering user:', error);
+        res.status(400).json({ error: "Error occurred! Try Again", details: error.message });
+    }
+};
+
+exports.verifyEmail = async (req, res) => {
+    try {
+        const { token } = req.query;
+
+        const decodedToken = jwt.verify(token, process.env.VERIFICATION_SECRET);
+        const email = decodedToken.email;
+
+        await User.findOneAndUpdate({ email }, { isEmailVerified: true });
+
+        res.status(200).json({ message: 'Email verified successfully. You can now login.' });
+    } catch (error) {
+        console.error('Error verifying email:', error);
+        res.status(400).json({ error: 'Invalid or expired verification token' });
     }
 };
 
@@ -55,6 +74,9 @@ exports.loginUser = async (req, res) => {
             return res.status(400).json({ error: 'Invalid username or password' });
         }
 
+        if (!user.isEmailVerified) {
+            return res.status(400).json({ error: 'Email not verified. Please verify your email address.' });
+        }
         const token = jwt.sign({ userId: user._id }, process.env.KEY, { expiresIn: '1h' });
 
         await AccessToken.create({
@@ -262,16 +284,20 @@ exports.verifyResetPassword = async (req, res) => {
 };
 
 
-const sendRegistrationEmail = async (email) => {
+const sendRegistrationEmail = async (email, verificationToken) => {
+    const verificationLink = `http://localhost:8000/user/verify-email?token=${verificationToken}`;
+
     const mailOptions = {
         from: process.env.EMAIL_ID,
         to: email,
         subject: 'Welcome to Our Application!',
-        text: 'Thank you for registering with us!'
+        html: `
+        <p>Thank you for registering with us!</p>
+        <p>Please verify your email address by clicking <a href="${verificationLink}">here</a>.</p>`
     };
-
     await transporter.sendMail(mailOptions);
 };
+
 
 const sendPasswordResetEmail = async (email, resetToken) => {
     const resetLink = `http://localhost:8000/user/verify_reset_password/${resetToken}`;
@@ -282,7 +308,6 @@ const sendPasswordResetEmail = async (email, resetToken) => {
         subject: 'Password Reset Request',
         html: `<p>You have requested to reset your password. Please click <a href="${resetLink}">here</a> to reset your password.</p>`
     };
-
     await transporter.sendMail(mailOptions);
 };
 
@@ -293,11 +318,8 @@ const sendPasswordResetSuccessEmail = async (email) => {
         subject: 'Password Reset Successful',
         text: 'Your password has been successfully reset.'
     };
-
     await transporter.sendMail(mailOptions);
 };
-
-
 
 exports.uploadProfileImage = async (req, res) => {
     try {
@@ -321,46 +343,3 @@ exports.uploadProfileImage = async (req, res) => {
         res.status(500).json({ error: 'Error uploading profile image' });
     }
 };
-
-// const storage = multer.diskStorage({
-//     destination: function (req, file, cb) {
-//         cb(null, 'uploads/'); // Specify the folder where files will be stored locally
-//     },
-//     filename: function (req, file, cb) {
-//         cb(null, Date.now() + '-' + file.originalname); // Generate unique filename
-//     }
-// });
-
-// const upload = multer({ storage: storage });
-
-// // Configure Cloudinary for online storage
-// cloudinary.config({
-//     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-//     api_key: process.env.CLOUDINARY_API_KEY,
-//     api_secret: process.env.CLOUDINARY_API_SECRET
-// });
-
-// exports.uploadProfileImage = async (req, res) => {
-//     try {
-//         const { flag } = req.body;
-//         const file = req.file;
-
-//         if (!flag) {
-//             return res.status(400).json({ error: 'Flag is required' });
-//         }
-
-//         if (flag === 'online') {
-//             // Upload image to Cloudinary for online storage
-//             const result = await cloudinary.uploader.upload(file.path);
-//             return res.status(200).json({ imageUrl: result.secure_url });
-//         } else if (flag === 'local') {
-//             // Return local file path if uploaded to folder
-//             return res.status(200).json({ imagePath: file.path });
-//         } else {
-//             return res.status(400).json({ error: 'Invalid flag' });
-//         }
-//     } catch (error) {
-//         console.error('Error uploading profile image:', error);
-//         res.status(500).json({ error: 'Error uploading profile image' });
-//     }
-// };
